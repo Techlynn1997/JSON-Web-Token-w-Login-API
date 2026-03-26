@@ -1,0 +1,86 @@
+let express=require("express");
+let path=require("path");
+const cors=require("cors");
+
+
+
+
+let app=express();
+app.use(cors());
+app.use(express.json());
+const {Pool}=require("pg");
+const bcrypt=require('bcryptjs');
+const jwt=require('jsonwebtoken');
+require('dotenv').config();
+const {DATABASE_URL, SECRET_KEY}=process.env;
+
+const pool=new Pool({
+    connectionString: DATABASE_URL,
+    ssl:{
+        require:true,
+    },
+});
+
+app.post('/signup',async (req, res)=>{
+    const client=await pool.connect();
+    console.log(`Hello`);
+    try{
+        const{username,password}=req.body;
+        const hashedPassword=await bcrypt.hash(password,12);
+
+        const userResult=await client.query('SELECT * FROM users WHERE username=$1', [username]);
+        console.log(userResult);
+        if(userResult.rows.length>0){
+            return res.status(400).json({message: "Username already taken."});
+        }
+        await client.query('INSERT INTO users (username, password) VALUES ($1,$2)', [username, hashedPassword]);
+
+        res.status(201).json({message: "User registered successfully"});
+    }catch(error){
+        console.error('Error: ;',error.message);
+        res.status(500).json({error:error.message})
+    }finally{
+        client.release();
+    }
+    });
+
+    app.get('/username', (req, res)=>{
+        const authToken=req.headers.authorization;
+    if (!authToken) return res.status(401).json({error:'Access Denied'});
+
+    try{
+        const verified =jwt.verify(authToken, SECRET_KEY);
+        res.json({
+            username: verified.username
+        });
+    }catch (err){
+        res.status(400).json({error: 'Invalid Token'});
+    }
+});
+
+    app.get('/', (req,res)=>{
+        res.sendFile(path.join(__dirname+'/index.html'));
+    });
+
+    app.listen(3000, ()=>{
+        console.log('App is listening on port 3000');
+    });
+
+    app.post('/login', async (req, res)=>{
+        const client=await pool.connect();
+        try{
+            const result=await client.query('SELECT * FROM users WHERE username=$1',  [req.body.username]);
+            const user=result.rows[0];
+            if(!user) return res.status(400).json({message:"Username or password incorrect"});
+            const passwordIsValid=await bcrypt.compare(req.body.password,user.password);
+            if(!passwordIsValid) return res.status(401).json({auth: false, token: null});
+            console.log('HI');
+            var token=jwt.sign({id: user.id, username: user.username}, SECRET_KEY,{ expiresIn: 86400});
+            res.status(200).json({auth:true, token: token});
+        }catch (error){
+        console.error('Error:',error.message);
+        res.status(500).json({error:error.message});
+        }finally{
+        client.release();
+        }
+    });
